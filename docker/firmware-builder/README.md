@@ -14,7 +14,10 @@ docker build \
   -t xiaozhi/firmware-builder:idf61-arm64 .
 ```
 
-The base image defaults to `espressif/idf:release-v6.1`.
+The base image is pinned to the published ESP-IDF v6.1 image digest. The
+repository's `dependencies.lock` pins every managed component version and
+content hash used by the ESP32-C3 build. Update either pin deliberately and
+verify a clean full build before accepting the change.
 
 `scripts/build.py` configures the target, generated sdkconfig defaults, and
 board name in one `idf.py reconfigure` call. Component Manager resolves and
@@ -51,7 +54,21 @@ Each successful job writes:
 - `merged-binary.bin`: full flash image;
 - `build.log`: complete compiler output;
 - `manifest.json`: inputs, tool versions, source revision, sizes, and SHA-256
-  checksums.
+  checksums, including the IDF image reference and component lock checksum.
+
+## Reproducible ESP-Hi build on Windows
+
+From PowerShell, run the repository wrapper. It refuses to reuse a non-empty
+output directory, builds the pinned container image, and then builds the
+ESP32-C3 `esp-hi` firmware with the locked components:
+
+```powershell
+.\scripts\build-esp-hi-repro.ps1 -OutputDirectory ..\repro-build-esp-hi
+```
+
+The fixed defaults are `zh-CN` and `nihaoxiaozhi` (resolved to the C3-compatible
+`wn9s_nihaoxiaozhi` model). To produce another explicitly recorded locale, pass
+`-Language zh-TW`; the manifest records every selected input.
 
 To upload the job output to an HTTP artifact receiver, also pass:
 

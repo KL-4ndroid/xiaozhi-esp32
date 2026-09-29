@@ -25,6 +25,7 @@ class FirmwareBuilderTest(unittest.TestCase):
         (source / "CMakeLists.txt").write_text(
             'set(PROJECT_VER "9.8.7")\n', encoding="utf-8"
         )
+        (source / "dependencies.lock").write_bytes(b"locked-components\n")
         (board / "config.json").write_text(
             json.dumps(
                 {
@@ -58,7 +59,11 @@ sys.exit(%d)
             root = Path(temporary)
             source = self.create_source(root)
             output = root / "output"
-            with patch.dict(os.environ, {"FIRMWARE_SOURCE_REVISION": "abc123"}):
+            build_environment = {
+                "FIRMWARE_SOURCE_REVISION": "abc123",
+                "FIRMWARE_IDF_IMAGE": "espressif/idf:v6.1@sha256:test",
+            }
+            with patch.dict(os.environ, build_environment):
                 exit_code = firmware_builder.main(
                     [
                         "--board-dir",
@@ -87,6 +92,13 @@ sys.exit(%d)
             self.assertEqual(manifest["status"], "succeeded")
             self.assertEqual(manifest["firmware_version"], "9.8.7")
             self.assertEqual(manifest["firmware_source_revision"], "abc123")
+            self.assertEqual(
+                manifest["idf_image"], "espressif/idf:v6.1@sha256:test"
+            )
+            self.assertEqual(
+                manifest["dependencies_lock_sha256"],
+                firmware_builder.sha256(source / "dependencies.lock"),
+            )
             self.assertEqual(manifest["board_dir"], "xmini/c3")
             self.assertEqual(manifest["board_type"], "xmini-c3")
             self.assertEqual(manifest["board_name"], "xmini-c3")

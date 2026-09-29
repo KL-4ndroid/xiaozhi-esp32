@@ -29,6 +29,7 @@
                 "CONFIG_ESP_CONSOLE_NONE=y",
                 "CONFIG_USE_ESP_WAKE_WORD=y",
                 "CONFIG_COMPILER_OPTIMIZATION_SIZE=y",
+                "CONFIG_APP_REPRODUCIBLE_BUILD=y",
                 "CONFIG_CODEC_DATA_ADC_SUPPORT=y"
             ]
         }

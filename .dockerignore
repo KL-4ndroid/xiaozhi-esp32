@@ -9,7 +9,6 @@ components
 managed_components
 releases
 tmp
-dependencies.lock
 sdkconfig
 sdkconfig.old
 **/__pycache__

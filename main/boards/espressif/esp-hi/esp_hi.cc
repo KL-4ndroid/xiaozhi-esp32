@@ -4,7 +4,9 @@
 #include "button.h"
 #include "config.h"
 #include "mcp_server.h"
+#include "settings.h"
 #include <esp_log.h>
+#include <esp_mac.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <esp_wifi.h>
@@ -19,6 +21,7 @@
 
 #include "assets/lang_config.h"
 #include "anim_player.h"
+#include "dog_motion.h"
 #include "emoji_display.h"
 #include "servo_dog_ctrl.h"
 #include "led_strip.h"
@@ -99,6 +102,45 @@ private:
     bool web_server_initialized_ = false;
     led_strip_handle_t led_strip_;
     bool led_on_ = false;
+
+    void InitializeLegacyDeviceIdentity()
+    {
+        Settings settings("dev_identity", false);
+        const std::string custom_mac = settings.GetString("custom_mac");
+        if (custom_mac.empty()) {
+            return;
+        }
+
+        unsigned int octets[6] = {};
+        if (sscanf(custom_mac.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x", &octets[0], &octets[1],
+                   &octets[2], &octets[3], &octets[4], &octets[5]) != 6) {
+            ESP_LOGW(TAG, "Ignoring invalid legacy custom MAC: %s", custom_mac.c_str());
+            return;
+        }
+
+        uint8_t mac[6];
+        bool all_zero = true;
+        for (size_t i = 0; i < sizeof(mac); ++i) {
+            if (octets[i] > UINT8_MAX) {
+                ESP_LOGW(TAG, "Ignoring invalid legacy custom MAC: %s", custom_mac.c_str());
+                return;
+            }
+            mac[i] = static_cast<uint8_t>(octets[i]);
+            all_zero = all_zero && mac[i] == 0;
+        }
+        if (all_zero || (mac[0] & 0x01) != 0) {
+            ESP_LOGW(TAG, "Ignoring unusable legacy custom MAC: %s", custom_mac.c_str());
+            return;
+        }
+
+        esp_err_t err = esp_base_mac_addr_set(mac);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore legacy custom MAC %s: %s", custom_mac.c_str(),
+                     esp_err_to_name(err));
+            return;
+        }
+        ESP_LOGI(TAG, "Restored legacy custom MAC: %s", custom_mac.c_str());
+    }
 
 #ifdef CONFIG_ESP_HI_WEB_CONTROL_ENABLED
     static void wifi_event_handler(void* arg, esp_event_base_t event_base,
@@ -328,57 +370,33 @@ private:
     void InitializeTools()
     {
         auto& mcp_server = McpServer::GetInstance();
-        
-        // 基础动作控制
-        mcp_server.AddTool("self.dog.basic_control", "机器人的基础动作。机器人可以做以下基础动作：\n"
-            "forward: 向前移动\nbackward: 向后移动\nturn_left: 向左转\nturn_right: 向右转\nstop: 立即停止当前动作", 
-            PropertyList({
-                Property("action", kPropertyTypeString),
-            }), [this](const PropertyList& properties) -> ReturnValue {
-                const std::string& action = properties["action"].value<std::string>();
-                if (action == "forward") {
-                    servo_dog_ctrl_send(DOG_STATE_FORWARD, NULL);
-                } else if (action == "backward") {
-                    servo_dog_ctrl_send(DOG_STATE_BACKWARD, NULL);
-                } else if (action == "turn_left") {
-                    servo_dog_ctrl_send(DOG_STATE_TURN_LEFT, NULL);
-                } else if (action == "turn_right") {
-                    servo_dog_ctrl_send(DOG_STATE_TURN_RIGHT, NULL);
-                } else if (action == "stop") {
-                    servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
-                } else {
-                    return false;
+
+        mcp_server.AddTool("self.dog.forward", "讓機器狗使用既有步態向前移動一個週期", PropertyList(),
+            [](const PropertyList&) -> ToolResult {
+                const DogMotionResult result =
+                    DogMotion::GetInstance().Execute(DogMotionAction::kForward);
+                if (result != DogMotionResult::kOk) {
+                    return std::unexpected(DogMotion::ErrorMessage(result));
                 }
                 return true;
             });
-        
-        // 扩展动作控制
-        mcp_server.AddTool("self.dog.advanced_control", "机器人的扩展动作。机器人可以做以下扩展动作：\n"
-            "sway_back_forth: 前后摇摆\nlay_down: 趴下\nsway: 左右摇摆\nretract_legs: 收回腿部\n"
-            "shake_hand: 握手\nshake_back_legs: 伸懒腰\njump_forward: 向前跳跃", 
-            PropertyList({
-                Property("action", kPropertyTypeString),
-            }), [this](const PropertyList& properties) -> ReturnValue {
+
+        Property action_property("action", kPropertyTypeString);
+        action_property.SetMaxLength(16);
+        mcp_server.AddTool(
+            "self.dog.action",
+            "執行經白名單限制的機器狗動作。action 只允許 forward、backward、turn_left、turn_right、stop、home。"
+            "每次移動最多一個週期；不接受 Servo 角度、速度或重複次數。",
+            PropertyList({action_property}), [](const PropertyList& properties) -> ToolResult {
                 const std::string& action = properties["action"].value<std::string>();
-                if (action == "sway_back_forth") {
-                    servo_dog_ctrl_send(DOG_STATE_SWAY_BACK_FORTH, NULL);
-                } else if (action == "lay_down") {
-                    servo_dog_ctrl_send(DOG_STATE_LAY_DOWN, NULL);
-                } else if (action == "sway") {
-                    dog_action_args_t args = {
-                        .repeat_count = 4,
-                    };
-                    servo_dog_ctrl_send(DOG_STATE_SWAY, &args);
-                } else if (action == "retract_legs") {
-                    servo_dog_ctrl_send(DOG_STATE_RETRACT_LEGS, NULL);
-                } else if (action == "shake_hand") {
-                    servo_dog_ctrl_send(DOG_STATE_SHAKE_HAND, NULL);
-                } else if (action == "shake_back_legs") {
-                    servo_dog_ctrl_send(DOG_STATE_SHAKE_BACK_LEGS, NULL);
-                } else if (action == "jump_forward") {
-                    servo_dog_ctrl_send(DOG_STATE_JUMP_FORWARD, NULL);
-                } else {
-                    return false;
+                const auto parsed_action = DogMotion::Parse(action);
+                if (!parsed_action.has_value()) {
+                    return std::unexpected("Unsupported dog action: " + action);
+                }
+
+                const DogMotionResult result = DogMotion::GetInstance().Execute(*parsed_action);
+                if (result != DogMotionResult::kOk) {
+                    return std::unexpected(DogMotion::ErrorMessage(result));
                 }
                 return true;
             });
@@ -420,6 +438,7 @@ public:
         audio_wake_button_(AUDIO_WAKE_BUTTON_GPIO),
         move_wake_button_(MOVE_WAKE_BUTTON_GPIO)
     {
+        InitializeLegacyDeviceIdentity();
         InitializeButtons();
         InitializeIot();
         InitializeSpi();

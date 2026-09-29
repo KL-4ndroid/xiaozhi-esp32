@@ -390,6 +390,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     log_path = args.output_dir / "build.log"
+    dependency_lock = args.source_dir / "dependencies.lock"
     manifest: dict[str, object] = {
         "schema_version": 1,
         "status": "running",
@@ -402,7 +403,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "build_options": args.build_options,
         "firmware_version": project_version(args.source_dir),
         "firmware_source_revision": env("FIRMWARE_SOURCE_REVISION") or "unknown",
+        "idf_image": env("FIRMWARE_IDF_IMAGE") or "unknown",
         "idf_version": command_output(["idf.py", "--version"], args.source_dir),
+        "dependencies_lock_sha256": (
+            sha256(dependency_lock) if dependency_lock.is_file() else None
+        ),
         "runtime_architecture": command_output(["uname", "-m"], args.source_dir),
         "runtime_cpu_count": os.cpu_count(),
         "started_at": started_at,
