@@ -385,16 +385,23 @@ private:
         action_property.SetMaxLength(16);
         mcp_server.AddTool(
             "self.dog.action",
-            "執行經白名單限制的機器狗動作。action 只允許 forward、backward、turn_left、turn_right、stop、home。"
-            "每次移動最多一個週期；不接受 Servo 角度、速度或重複次數。",
-            PropertyList({action_property}), [](const PropertyList& properties) -> ToolResult {
+            "依照使用者的口語指令執行白名單動作：forward 前進/往前走、backward 後退/往後走、"
+            "turn_left 左轉、turn_right 右轉、lay_down 趴下/臥倒、bow 鞠躬、lean_back 後仰、"
+            "bow_lean 前後擺動/玩耍/跳舞、sway_back_forth 前後搖擺、sway 左右搖擺/搖屁股、"
+            "shake_hand 握手、shake_back_legs 伸懶腰/抖後腿、retract_legs 收腿/把自己收起來、"
+            "stop 停止、home 回正/站好。cycles 表示前進、後退或轉向的步態週期，預設 1、最多 5；"
+            "例如『往前走五步』使用 action=forward, cycles=5。姿勢和表演動作必須用 cycles=1。"
+            "不可傳入 Servo 角度或速度；跳躍、戳刺與校正動作不開放。",
+            PropertyList({action_property, Property("cycles", kPropertyTypeInteger, 1, 1, 5)}),
+            [](const PropertyList& properties) -> ToolResult {
                 const std::string& action = properties["action"].value<std::string>();
+                const int cycles = properties["cycles"].value<int>();
                 const auto parsed_action = DogMotion::Parse(action);
                 if (!parsed_action.has_value()) {
                     return std::unexpected("Unsupported dog action: " + action);
                 }
 
-                const DogMotionResult result = DogMotion::GetInstance().Execute(*parsed_action);
+                const DogMotionResult result = DogMotion::GetInstance().Execute(*parsed_action, cycles);
                 if (result != DogMotionResult::kOk) {
                     return std::unexpected(DogMotion::ErrorMessage(result));
                 }

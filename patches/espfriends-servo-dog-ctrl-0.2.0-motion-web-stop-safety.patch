@@ -1,0 +1,14 @@
+diff --git a/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c b/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
+--- a/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
++++ b/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
+@@ -237,6 +237,10 @@ static esp_err_t control_handler_func(httpd_req_t *req)
+                 ESP_LOGI(TAG, "Right");
+                 servo_dog_ctrl_send(DOG_STATE_TURN_RIGHT, NULL);
+                 break;
++            case 'S':
++                ESP_LOGI(TAG, "Stop");
++                servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
++                break;
+         }
+     } else if (strcmp(function, "action") == 0) {
+         ESP_LOGI(TAG, "Action request received %s", value);

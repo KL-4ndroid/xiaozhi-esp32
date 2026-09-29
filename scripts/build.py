@@ -37,6 +37,33 @@ _WAKE_WORD_MODEL_PATTERN = re.compile(r"^wn9[sl]?_[a-z0-9_]+$")
 _ESP_SR_KCONFIG = Path(
     "managed_components/espressif__esp-sr/Kconfig.projbuild"
 )
+_MANAGED_COMPONENT_PATCHES = (
+    (
+        Path("managed_components/espfriends__servo_dog_ctrl/idf_component.yml"),
+        "0.2.0",
+        Path("patches/espfriends-servo-dog-ctrl-0.2.0-calibration-safety.patch"),
+    ),
+    (
+        Path("managed_components/espfriends__servo_dog_ctrl/idf_component.yml"),
+        "0.2.0",
+        Path("patches/espfriends-servo-dog-ctrl-0.2.0-motion-direction-safety.patch"),
+    ),
+    (
+        Path("managed_components/espfriends__servo_dog_ctrl/idf_component.yml"),
+        "0.2.0",
+        Path("patches/espfriends-servo-dog-ctrl-0.2.0-motion-queue-safety.patch"),
+    ),
+    (
+        Path("managed_components/espfriends__servo_dog_ctrl/idf_component.yml"),
+        "0.2.0",
+        Path("patches/espfriends-servo-dog-ctrl-0.2.0-motion-send-safety.patch"),
+    ),
+    (
+        Path("managed_components/espfriends__servo_dog_ctrl/idf_component.yml"),
+        "0.2.0",
+        Path("patches/espfriends-servo-dog-ctrl-0.2.0-motion-web-stop-safety.patch"),
+    ),
+)
 
 
 def _emit_build_stage(stage: str) -> None:
@@ -76,6 +103,50 @@ def _run_idf(*args: str, preview: bool = False) -> None:
     if subprocess.run(command, check=False).returncode != 0:
         print(f"{' '.join(command)} failed", file=sys.stderr)
         sys.exit(1)
+
+
+def _apply_managed_component_patches() -> None:
+    """Apply reviewed fixes after Component Manager resolves pinned sources."""
+    for manifest_path, expected_version, patch_path in _MANAGED_COMPONENT_PATCHES:
+        if not manifest_path.is_file():
+            raise RuntimeError(f"Managed component manifest is missing: {manifest_path}")
+        if not patch_path.is_file():
+            raise RuntimeError(f"Managed component patch is missing: {patch_path}")
+
+        manifest = manifest_path.read_text(encoding="utf-8")
+        if not re.search(
+            rf"^version:\s*{re.escape(expected_version)}\s*$",
+            manifest,
+            re.MULTILINE,
+        ):
+            raise RuntimeError(
+                f"{patch_path} only supports component version {expected_version}; "
+                f"update the patch before building a different version"
+            )
+
+        base_command = ["git", "apply", "--recount"]
+        reverse_check = subprocess.run(
+            [*base_command, "--reverse", "--check", str(patch_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if reverse_check.returncode == 0:
+            print(f"[INFO] Managed component patch already applied: {patch_path}")
+            continue
+
+        forward_check = subprocess.run(
+            [*base_command, "--check", str(patch_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if forward_check.returncode != 0:
+            details = forward_check.stderr.strip() or forward_check.stdout.strip()
+            raise RuntimeError(f"Managed component patch no longer applies: {patch_path}\n{details}")
+
+        subprocess.run([*base_command, str(patch_path)], check=True)
+        print(f"[INFO] Applied managed component patch: {patch_path}")
 
 
 def merge_bin(preview: bool = False) -> None:
@@ -1592,6 +1663,7 @@ def build_board(
             name,
             preview,
         )
+        _apply_managed_component_patches()
         for symbols, option_name in validation_symbols:
             _validate_configured_symbols(symbols, option_name)
         _validate_configured_options(build_option_sdkconfig, "--build-options-json")

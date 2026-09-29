@@ -1,0 +1,192 @@
+diff --git a/managed_components/espfriends__servo_dog_ctrl/include/servo_dog_ctrl.h b/managed_components/espfriends__servo_dog_ctrl/include/servo_dog_ctrl.h
+--- a/managed_components/espfriends__servo_dog_ctrl/include/servo_dog_ctrl.h
++++ b/managed_components/espfriends__servo_dog_ctrl/include/servo_dog_ctrl.h
+@@ -29,19 +29,19 @@ typedef struct {
+     /* Idle state, the dog holds its current posture */ \
+     X(DOG_STATE_IDLE, servo_dog_neutral, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ 0) \
+     /* Move forward, all four legs step forward according to the gait */ \
+-    X(DOG_STATE_FORWARD, servo_dog_forward, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_FORWARD, servo_dog_backward, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Move backward, all four legs move in reverse */ \
+-    X(DOG_STATE_BACKWARD, servo_dog_backward, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_BACKWARD, servo_dog_forward, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Turn right, coordinated movement of legs to turn right */ \
+     X(DOG_STATE_TURN_RIGHT, servo_dog_turn_right, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Turn left, coordinated movement of legs to turn left */ \
+     X(DOG_STATE_TURN_LEFT, servo_dog_turn_left, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Lay down, body lowers closer to the ground to simulate resting */ \
+     X(DOG_STATE_LAY_DOWN, servo_dog_lay_down, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Bowing, front legs press down, hips raised—like a dog stretching or being playful */ \
+-    X(DOG_STATE_BOW, servo_dog_bow, /* repeat_count */ NOT_USE, /* speed */ 80, /* hold_time_ms */ 500, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_BOW, servo_dog_lean_back, /* repeat_count */ NOT_USE, /* speed */ 80, /* hold_time_ms */ 500, /* angle_offset */ NOT_USE) \
+     /* Lean back, rear legs press down, front legs raised, body leans backward */ \
+-    X(DOG_STATE_LEAN_BACK, servo_dog_lean_back, /* repeat_count */ NOT_USE, /* speed */ 80, /* hold_time_ms */ 500, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_LEAN_BACK, servo_dog_bow, /* repeat_count */ NOT_USE, /* speed */ 80, /* hold_time_ms */ 500, /* angle_offset */ NOT_USE) \
+     /* A repeated combination of bow and lean back, simulating play or dancing */ \
+     X(DOG_STATE_BOW_LEAN, servo_dog_bow_and_lean_back, /* repeat_count */ 2, /* speed */ 80, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Sway back and forth */ \
+@@ -55,9 +55,9 @@ typedef struct {
+     /* Shake back legs action */ \
+     X(DOG_STATE_SHAKE_BACK_LEGS, servo_dog_shake_back_legs, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ 0) \
+     /* Jump forward, body jumps forward */ \
+-    X(DOG_STATE_JUMP_FORWARD, servo_dog_jump_forward, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_JUMP_FORWARD, servo_dog_jump_backward, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Jump backward, body jumps backward */ \
+-    X(DOG_STATE_JUMP_BACKWARD, servo_dog_jump_backward, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
++    X(DOG_STATE_JUMP_BACKWARD, servo_dog_jump_forward, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE) \
+     /* Retract legs, all four legs move back to the starting position */ \
+     X(DOG_STATE_RETRACT_LEGS, servo_dog_retract_legs, /* repeat_count */ NOT_USE, /* speed */ NOT_USE, /* hold_time_ms */ NOT_USE, /* angle_offset */ NOT_USE)
+
+diff --git a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+--- a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
++++ b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+@@ -215,22 +215,25 @@ static void servo_dog_turn_left(dog_action_args_t args)
+         uint16_t step_delay_ms = 500 / args.speed;
+ 
+         for (int step = 0; step < args.repeat_count; step++) {
+-            for (int i = 0; i < 40; i++) {
+-                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_BACKWARD - i + STEP_OFFSET);
+-                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_BACKWARD - i + STEP_OFFSET);
+-                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_BACKWARD + i);
+-                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_BACKWARD + i);
++            // The upstream trajectory turns in the requested direction while
++            // travelling backwards on ESP-Hi. Play the same path in reverse
++            // so the head advances into the turn.
++            for (int i = 39; i >= 0; i--) {
++                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_FORWARD + i - STEP_OFFSET);
++                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_FORWARD + i - STEP_OFFSET);
++                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_FORWARD - i);
++                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_FORWARD - i);
+ 
+                 SERVOR_DOG_ACTION_DELAY(step_delay_ms / portTICK_PERIOD_MS);
+             }
+ 
+-            for (int i = 0; i < 40; i++) {
+-                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_FORWARD + i - STEP_OFFSET);
+-                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_FORWARD + i - STEP_OFFSET);
+-                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_FORWARD - i);
+-                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_FORWARD - i);
++            for (int i = 39; i >= 0; i--) {
++                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_BACKWARD - i + STEP_OFFSET);
++                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_BACKWARD - i + STEP_OFFSET);
++                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_BACKWARD + i);
++                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_BACKWARD + i);
+ 
+                 SERVOR_DOG_ACTION_DELAY(step_delay_ms / portTICK_PERIOD_MS);
+             }
+@@ -251,22 +254,22 @@ static void servo_dog_turn_right(dog_action_args_t args)
+         uint16_t step_delay_ms = 500 / args.speed;
+ 
+         for (int step = 0; step < args.repeat_count; step++) {
+-            for (int i = 0; i < 40; i++) {
+-                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_FORWARD + i);
+-                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_FORWARD + i);
+-                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_FORWARD - i + STEP_OFFSET);
+-                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_FORWARD - i + STEP_OFFSET);
++            for (int i = 39; i >= 0; i--) {
++                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_BACKWARD - i - STEP_OFFSET);
++                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_BACKWARD - i - STEP_OFFSET);
++                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_BACKWARD + i);
++                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_BACKWARD + i);
+ 
+                 SERVOR_DOG_ACTION_DELAY(step_delay_ms / portTICK_PERIOD_MS);
+             }
+ 
+-            for (int i = 0; i < 40; i++) {
+-                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_BACKWARD - i - STEP_OFFSET);
+-                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_BACKWARD - i - STEP_OFFSET);
+-                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_BACKWARD + i);
+-                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_BACKWARD + i);
++            for (int i = 39; i >= 0; i--) {
++                servo_set_angle(SERVO_FL, FL_ANGLE_STEP_FORWARD + i);
++                servo_set_angle(SERVO_BR, BR_ANGLE_STEP_FORWARD + i);
++                servo_set_angle(SERVO_BL, BL_ANGLE_STEP_FORWARD - i + STEP_OFFSET);
++                servo_set_angle(SERVO_FR, FR_ANGLE_STEP_FORWARD - i + STEP_OFFSET);
+                 SERVOR_DOG_ACTION_DELAY(step_delay_ms / portTICK_PERIOD_MS);
+             }
+         }
+diff --git a/managed_components/espfriends__servo_dog_ctrl/assets/main.js b/managed_components/espfriends__servo_dog_ctrl/assets/main.js
+--- a/managed_components/espfriends__servo_dog_ctrl/assets/main.js
++++ b/managed_components/espfriends__servo_dog_ctrl/assets/main.js
+@@ -11,7 +11,7 @@ const ACTION_NAMES = {
+ };
+ 
+ const DISTANCE_THRESHOLD = 0.2;
+-const SEND_INTERVAL = 500;
++const SEND_INTERVAL = 1500;
+ const CALIBRATION_LIMITS = Object.freeze({
+   fl: { min: 0, max: 25 },
+   fr: { min: -25, max: 0 },
+@@ -102,14 +102,12 @@ class ControlPanel {
+ 
+   handleJoystickEvent(evt, data) {
+     if (evt.type === 'end') {
+-      clearInterval(this.interval);
+-      this.lastDir = null;
++      this.stopMove();
+       return;
+     }
+ 
+     if (data.force < DISTANCE_THRESHOLD) {
+-      clearInterval(this.interval);
+-      this.lastDir = null;
++      this.stopMove();
+       return;
+     }
+@@ -140,6 +138,15 @@ class ControlPanel {
+       this.controlError.textContent = error.message;
+     }
+   }
++
++  stopMove() {
++    clearInterval(this.interval);
++    this.interval = null;
++    if (this.lastDir !== null) {
++      this.lastDir = null;
++      this.sendMove('S');
++    }
++  }
+ }
+
+diff --git a/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js b/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
+--- a/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
++++ b/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
+@@ -11,7 +11,7 @@ const ACTION_NAMES = {
+ };
+ 
+ const DISTANCE_THRESHOLD = 0.2;
+-const SEND_INTERVAL = 500;
++const SEND_INTERVAL = 1500;
+ const CALIBRATION_LIMITS = Object.freeze({
+   fl: { min: 0, max: 25 },
+   fr: { min: -25, max: 0 },
+@@ -103,14 +103,12 @@ class ControlPanel {
+ 
+   handleJoystickEvent(evt, data) {
+     if (evt.type === 'end') {
+-      clearInterval(this.interval);
+-      this.lastDir = null;
++      this.stopMove();
+       return;
+     }
+ 
+     if (data.force < DISTANCE_THRESHOLD) {
+-      clearInterval(this.interval);
+-      this.lastDir = null;
++      this.stopMove();
+       return;
+     }
+@@ -141,6 +139,15 @@ class ControlPanel {
+       this.controlError.textContent = error.message;
+     }
+   }
++
++  stopMove() {
++    clearInterval(this.interval);
++    this.interval = null;
++    if (this.lastDir !== null) {
++      this.lastDir = null;
++      this.sendMove('S');
++    }
++  }
+ }

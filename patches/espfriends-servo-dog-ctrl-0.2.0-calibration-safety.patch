@@ -1,0 +1,309 @@
+diff --git a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+--- a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
++++ b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+@@ -23,6 +23,8 @@ static void servo_dog_ledc_stop(void);
+ 
+ #define STEP_OFFSET                 5
++#define SERVO_MIN_ANGLE             0
++#define SERVO_MAX_ANGLE             180
+ 
+ static uint16_t fl_angle_neutral = CONFIG_FL_ANGLE_NEUTRAL;
+ static uint16_t fr_angle_neutral = CONFIG_FR_ANGLE_NEUTRAL;
+@@ -92,10 +94,24 @@ void servo_dog_set_leg_offset(int8_t fl_offset, int8_t bl_offset, int8_t fr_off
+     br_angle_neutral = CONFIG_BR_ANGLE_NEUTRAL + br_offset;
+ }
+ 
+-static void servo_set_angle(servo_id_t servo_id, uint16_t angle)
++static void servo_set_angle(servo_id_t servo_id, int angle)
+ {
+     if (g_servo_dog != NULL && g_servo_dog->servos[servo_id] != NULL) {
+-        iot_servo_write_angle(g_servo_dog->servos[servo_id], angle);
++        int safe_angle = angle;
++        if (safe_angle < SERVO_MIN_ANGLE) {
++            safe_angle = SERVO_MIN_ANGLE;
++        } else if (safe_angle > SERVO_MAX_ANGLE) {
++            safe_angle = SERVO_MAX_ANGLE;
++        }
++
++        if (safe_angle != angle) {
++            ESP_LOGW(TAG, "Clamp servo %d angle from %d to %d", servo_id, angle, safe_angle);
++        }
++
++        esp_err_t ret = iot_servo_write_angle(g_servo_dog->servos[servo_id], safe_angle);
++        if (ret != ESP_OK) {
++            ESP_LOGE(TAG, "Failed to set servo %d angle to %d: %s", servo_id, safe_angle, esp_err_to_name(ret));
++        }
+     }
+ }
+diff --git a/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c b/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
+--- a/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
++++ b/managed_components/espfriends__servo_dog_ctrl/esp_hi_web_control.c
+@@ -17,6 +17,8 @@
+ 
+ static bool is_calibration_mode = false;
+ 
++#define CALIBRATION_OFFSET_LIMIT 25
++
+ #define IS_FILE_EXT(filename, ext) \
+     (strcasecmp(&filename[strlen(filename) - sizeof(ext) + 1], ext) == 0)
+ 
+@@ -96,11 +98,8 @@ static esp_err_t static_file_handler(httpd_req_t *req)
+     return ESP_OK;
+ }
+ 
+-// API: POST /reset
+-static esp_err_t start_calibration_handler_func(httpd_req_t *req)
++static esp_err_t send_calibration_values(httpd_req_t *req)
+ {
+-    ESP_LOGI(TAG, "Start calibration request received");
+     char response[128];
+     int fl = 0, fr = 0, bl = 0, br = 0;
+     servo_control_get_save_value(&fl, &fr, &bl, &br);
+@@ -108,9 +107,23 @@ static esp_err_t start_calibration_handler_func(httpd_req_t *req)
+     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+     httpd_resp_set_type(req, "application/json");
+     httpd_resp_send(req, response, len);
++    return ESP_OK;
++}
++
++static esp_err_t calibration_values_handler_func(httpd_req_t *req)
++{
++    ESP_LOGI(TAG, "Read calibration values request received");
++    return send_calibration_values(req);
++}
++
++static esp_err_t start_calibration_handler_func(httpd_req_t *req)
++{
++    ESP_LOGI(TAG, "Start calibration request received");
+     servo_dog_ctrl_send(DOG_STATE_INSTALLATION, NULL);
+     is_calibration_mode = true;
+-    return ESP_OK;
++    return send_calibration_values(req);
+ }
+ 
+ static esp_err_t exit_calibration_handler_func(httpd_req_t *req)
+@@ -125,6 +138,14 @@ static esp_err_t exit_calibration_handler_func(httpd_req_t *req)
+ static esp_err_t adjust_handler_func(httpd_req_t *req)
+ {
+     ESP_LOGI(TAG, "Adjust request received");
++    if (!is_calibration_mode) {
++        httpd_resp_set_status(req, "409 Conflict");
++        httpd_resp_set_type(req, "application/json");
++        httpd_resp_send(req, "{\"error\":\"Calibration mode is not active\"}", HTTPD_RESP_USE_STRLEN);
++        return ESP_OK;
++    }
++
+     char content[128] = {0};
+     int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+     if (ret <= 0) {
+@@ -137,10 +158,24 @@ static esp_err_t adjust_handler_func(httpd_req_t *req)
+     char leg_str[16] = {0};
+     int leg_value = 0;
+ 
++    // {"servo":"bl","value":1}
++    if (sscanf(content, "{\"servo\":\"%15[^\"]\",\"value\":%d}", leg_str, &leg_value) != 2) {
++        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid calibration request");
++        return ESP_OK;
++    }
++
++    bool forward_servo = strcmp(leg_str, "fl") == 0 || strcmp(leg_str, "br") == 0;
++    bool reverse_servo = strcmp(leg_str, "fr") == 0 || strcmp(leg_str, "bl") == 0;
++    bool value_in_range = (forward_servo && leg_value >= 0 && leg_value <= CALIBRATION_OFFSET_LIMIT) ||
++                          (reverse_servo && leg_value >= -CALIBRATION_OFFSET_LIMIT && leg_value <= 0);
++    if (!value_in_range) {
++        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Calibration value is outside the safe range");
++        return ESP_OK;
++    }
++
+     int fl = 0, fr = 0, bl = 0, br = 0;
+     servo_control_get_save_value(&fl, &fr, &bl, &br);
+-    // {"servo":"bl","value":1}
+-    sscanf(content, "{\"servo\":\"%[^\"]\",\"value\":%d}", leg_str, &leg_value);
+     if (strcmp(leg_str, "fl") == 0) {
+         ESP_LOGI(TAG, "Front left: %d", leg_value);
+         fl = leg_value;
+@@ -223,6 +258,14 @@ static esp_err_t start_webserver(void)
+      * target URIs which match the wildcard scheme */
+     config.uri_match_fn = httpd_uri_match_wildcard;
+ 
++    // HTTP_GET /calibration only reads saved offsets and never moves a servo.
++    httpd_uri_t calibration_values_handler = {
++        .uri = "/calibration",
++        .method = HTTP_GET,
++        .handler = calibration_values_handler_func,
++        .user_ctx = NULL
++    };
++
+     // HTTP_GET /start_calibration
+     httpd_uri_t start_calibration_handler = {
+         .uri = "/start_calibration",
+@@ -267,6 +310,7 @@ static esp_err_t start_webserver(void)
+ 
+     config.core_id = 0;
+     if (httpd_start(&server, &config) == ESP_OK) {
++        httpd_register_uri_handler(server, &calibration_values_handler);
+         httpd_register_uri_handler(server, &start_calibration_handler);
+         httpd_register_uri_handler(server, &exit_calibration_handler);
+         httpd_register_uri_handler(server, &adjust_handler);
+diff --git a/managed_components/espfriends__servo_dog_ctrl/assets/main.js b/managed_components/espfriends__servo_dog_ctrl/assets/main.js
+--- a/managed_components/espfriends__servo_dog_ctrl/assets/main.js
++++ b/managed_components/espfriends__servo_dog_ctrl/assets/main.js
+@@ -12,6 +12,12 @@ const ACTION_NAMES = {
+ 
+ const DISTANCE_THRESHOLD = 0.2;
+ const SEND_INTERVAL = 500;
++const CALIBRATION_LIMITS = Object.freeze({
++  fl: { min: 0, max: 25 },
++  fr: { min: -25, max: 0 },
++  bl: { min: -25, max: 0 },
++  br: { min: 0, max: 25 }
++});
+ 
+ async function sendRequest(endpoint, data = null) {
+   try {
+@@ -150,6 +156,18 @@ class CalibrationPanel {
+     this.exitCalibrationBtn = document.getElementById('exit-calibration');
+ 
+     this.initEventListeners();
++    this.loadCalibrationValues();
++  }
++
++  async loadCalibrationValues() {
++    if (location.hostname === 'localhost') return;
++
++    try {
++      this.cfg = await sendRequest('/calibration');
++      this.updateServoDisplay();
++    } catch (error) {
++      this.configError.textContent = error.message;
++    }
+   }
+ 
+   initEventListeners() {
+@@ -197,6 +215,7 @@ class CalibrationPanel {
+     this.current = servo.dataset.pos;
+     this.display.textContent = this.cfg[this.current];
+     document.querySelector('.adjust').style.display = 'flex';
++    this.updateAdjustmentButtons();
+   }
+ 
+   deselectServo() {
+@@ -208,14 +227,10 @@ class CalibrationPanel {
+   async adjust(delta) {
+     if (!this.current) return;
+     
+-    const newValue = this.cfg[this.current] + delta;
+-    if (newValue >= -25 && newValue <= 25) {
+-      this.cfg[this.current] = newValue;
+-    } else if (newValue < -25) {
+-      this.cfg[this.current] = -25;
+-    } else if (newValue > 25) {
+-      this.cfg[this.current] = 25;
+-    }
++    const limits = CALIBRATION_LIMITS[this.current];
++    const newValue = Math.min(limits.max, Math.max(limits.min, this.cfg[this.current] + delta));
++    if (newValue === this.cfg[this.current]) return;
++    this.cfg[this.current] = newValue;
+ 
+     this.updateServoDisplay();
+     try {
+@@ -232,7 +247,17 @@ class CalibrationPanel {
+     Object.entries(this.cfg).forEach(([pos, value]) => {
+       document.querySelector(`.servo[data-pos='${pos}'] .value`).textContent = value;
+     });
+-    this.display.textContent = this.cfg[this.current];
++    if (this.current) {
++      this.display.textContent = this.cfg[this.current];
++      this.updateAdjustmentButtons();
++    }
++  }
++
++  updateAdjustmentButtons() {
++    if (!this.current) return;
++    const limits = CALIBRATION_LIMITS[this.current];
++    this.minus.disabled = this.cfg[this.current] <= limits.min;
++    this.plus.disabled = this.cfg[this.current] >= limits.max;
+   }
+ }
+ 
+diff --git a/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js b/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
+--- a/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
++++ b/managed_components/espfriends__servo_dog_ctrl/assets_en/main.js
+@@ -12,6 +12,12 @@ const ACTION_NAMES = {
+ 
+ const DISTANCE_THRESHOLD = 0.2;
+ const SEND_INTERVAL = 500;
++const CALIBRATION_LIMITS = Object.freeze({
++  fl: { min: 0, max: 25 },
++  fr: { min: -25, max: 0 },
++  bl: { min: -25, max: 0 },
++  br: { min: 0, max: 25 }
++});
+ 
+ async function sendRequest(endpoint, data = null) {
+   try {
+@@ -151,6 +157,18 @@ class CalibrationPanel {
+     this.exitCalibrationBtn = document.getElementById('exit-calibration');
+ 
+     this.initEventListeners();
++    this.loadCalibrationValues();
++  }
++
++  async loadCalibrationValues() {
++    if (location.hostname === 'localhost') return;
++
++    try {
++      this.cfg = await sendRequest('/calibration');
++      this.updateServoDisplay();
++    } catch (error) {
++      this.configError.textContent = error.message;
++    }
+   }
+ 
+   initEventListeners() {
+@@ -206,6 +224,7 @@ class CalibrationPanel {
+     this.current = servo.dataset.pos;
+     this.display.textContent = this.cfg[this.current];
+     document.querySelector('.adjust').style.display = 'flex';
++    this.updateAdjustmentButtons();
+   }
+ 
+   deselectServo() {
+@@ -217,14 +236,10 @@ class CalibrationPanel {
+   async adjust(delta) {
+     if (!this.current) return;
+     
+-    const newValue = this.cfg[this.current] + delta;
+-    if (newValue >= -25 && newValue <= 25) {
+-      this.cfg[this.current] = newValue;
+-    } else if (newValue < -25) {
+-      this.cfg[this.current] = -25;
+-    } else if (newValue > 25) {
+-      this.cfg[this.current] = 25;
+-    }
++    const limits = CALIBRATION_LIMITS[this.current];
++    const newValue = Math.min(limits.max, Math.max(limits.min, this.cfg[this.current] + delta));
++    if (newValue === this.cfg[this.current]) return;
++    this.cfg[this.current] = newValue;
+ 
+     this.updateServoDisplay();
+     try {
+@@ -241,7 +256,17 @@ class CalibrationPanel {
+     Object.entries(this.cfg).forEach(([pos, value]) => {
+       document.querySelector(`.servo[data-pos='${pos}'] .value`).textContent = value;
+     });
+-    this.display.textContent = this.cfg[this.current];
++    if (this.current) {
++      this.display.textContent = this.cfg[this.current];
++      this.updateAdjustmentButtons();
++    }
++  }
++
++  updateAdjustmentButtons() {
++    if (!this.current) return;
++    const limits = CALIBRATION_LIMITS[this.current];
++    this.minus.disabled = this.cfg[this.current] <= limits.min;
++    this.plus.disabled = this.cfg[this.current] >= limits.max;
+   }
+ }
+ 

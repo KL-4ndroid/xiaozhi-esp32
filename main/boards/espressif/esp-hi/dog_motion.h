@@ -10,6 +10,15 @@ enum class DogMotionAction {
     kBackward,
     kTurnLeft,
     kTurnRight,
+    kLayDown,
+    kBow,
+    kLeanBack,
+    kBowLean,
+    kSwayBackForth,
+    kSway,
+    kShakeHand,
+    kShakeBackLegs,
+    kRetractLegs,
     kStop,
     kHome,
 };
@@ -17,6 +26,7 @@ enum class DogMotionAction {
 enum class DogMotionResult {
     kOk,
     kBusy,
+    kInvalidCycles,
     kControllerUnavailable,
     kSendFailed,
 };
@@ -39,6 +49,33 @@ public:
         if (name == "turn_right") {
             return DogMotionAction::kTurnRight;
         }
+        if (name == "lay_down") {
+            return DogMotionAction::kLayDown;
+        }
+        if (name == "bow") {
+            return DogMotionAction::kBow;
+        }
+        if (name == "lean_back") {
+            return DogMotionAction::kLeanBack;
+        }
+        if (name == "bow_lean") {
+            return DogMotionAction::kBowLean;
+        }
+        if (name == "sway_back_forth") {
+            return DogMotionAction::kSwayBackForth;
+        }
+        if (name == "sway") {
+            return DogMotionAction::kSway;
+        }
+        if (name == "shake_hand") {
+            return DogMotionAction::kShakeHand;
+        }
+        if (name == "shake_back_legs") {
+            return DogMotionAction::kShakeBackLegs;
+        }
+        if (name == "retract_legs") {
+            return DogMotionAction::kRetractLegs;
+        }
         if (name == "stop") {
             return DogMotionAction::kStop;
         }
@@ -50,7 +87,7 @@ public:
 
     static const char* ErrorMessage(DogMotionResult result);
 
-    DogMotionResult Execute(DogMotionAction action);
+    DogMotionResult Execute(DogMotionAction action, int cycles = 1);
 
 private:
     DogMotion() = default;

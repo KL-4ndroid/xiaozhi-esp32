@@ -1,0 +1,42 @@
+diff --git a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+--- a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
++++ b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+@@ -729,15 +729,32 @@ esp_err_t servo_dog_ctrl_send(servo_dog_state_t state, dog_action_args_t *args)
+     if (g_servo_dog == NULL) {
+         return ESP_ERR_INVALID_STATE;
+     }
++    if (state < 0 || state >= DOG_STATE_MAX) {
++        return ESP_ERR_INVALID_ARG;
++    }
+ 
+     servo_dog_action_msg_t msg = {0};
+     msg.state = state;
++    memcpy(&msg.args, &g_servo_dog_action_table[state].args, sizeof(dog_action_args_t));
+ 
+-    if (args == NULL) {
+-        memcpy(&msg.args, &g_servo_dog_action_table[state].args, sizeof(dog_action_args_t));
+-    } else {
+-        memcpy(&msg.args, args, sizeof(dog_action_args_t));
++    // Callers may override only the fields they need and leave the rest as
++    // NOT_USE. Preserve the reviewed action defaults for every other field.
++    if (args != NULL) {
++        if (args->repeat_count != NOT_USE) {
++            msg.args.repeat_count = args->repeat_count;
++        }
++        if (args->speed != NOT_USE) {
++            msg.args.speed = args->speed;
++        }
++        if (args->hold_time_ms != NOT_USE) {
++            msg.args.hold_time_ms = args->hold_time_ms;
++        }
++        if (args->angle_offset != NOT_USE) {
++            msg.args.angle_offset = args->angle_offset;
++        }
+     }
+-    xQueueSend(g_servo_dog->dog_action_queue, &msg, portMAX_DELAY);
+-    return ESP_OK;
++
++    // Motion is command state, not a backlog. Keeping only the latest command
++    // makes stop/home responsive and prevents repeated WebUI input piling up.
++    return xQueueOverwrite(g_servo_dog->dog_action_queue, &msg) == pdPASS ? ESP_OK : ESP_FAIL;
+ }

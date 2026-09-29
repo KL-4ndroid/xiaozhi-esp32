@@ -1,0 +1,12 @@
+diff --git a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+--- a/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
++++ b/managed_components/espfriends__servo_dog_ctrl/servo_dog_ctrl.c
+@@ -694,7 +694,7 @@ esp_err_t servo_dog_ctrl_init(servo_dog_ctrl_config_t *config)
+     ESP_RETURN_ON_FALSE(config != NULL, ESP_ERR_INVALID_ARG, TAG, "Invalid config");
+     g_servo_dog = (servor_dog_ctrl_t *)calloc(1, sizeof(servor_dog_ctrl_t));
+     ESP_RETURN_ON_FALSE(g_servo_dog != NULL, ESP_ERR_NO_MEM, TAG, "Failed to allocate memory for servo dog control");
+-    g_servo_dog->dog_action_queue = xQueueCreate(5, sizeof(servo_dog_action_msg_t));
++    g_servo_dog->dog_action_queue = xQueueCreate(1, sizeof(servo_dog_action_msg_t));
+     ESP_GOTO_ON_FALSE(g_servo_dog->dog_action_queue != NULL, ESP_ERR_NO_MEM, err, TAG, "Failed to create dog action queue");
+ 
+     g_servo_dog->fl_gpio_num = config->fl_gpio_num;
