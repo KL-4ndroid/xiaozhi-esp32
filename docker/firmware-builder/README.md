@@ -51,10 +51,14 @@ source and records the derived `board_type` before starting a build.
 Each successful job writes:
 
 - `xiaozhi.bin`: application/OTA image;
+- `generated_assets.bin`: assets partition image;
 - `merged-binary.bin`: full flash image;
 - `build.log`: complete compiler output;
 - `manifest.json`: inputs, tool versions, source revision, sizes, and SHA-256
   checksums, including the IDF image reference and component lock checksum.
+  Its `partition_flash` section contains the ESP-IDF-derived app/assets offsets
+  and an esptool argument list that deliberately omits NVS, the bootloader,
+  partition table, OTA data, and PHY initialization regions.
 
 ## Reproducible ESP-Hi build on Windows
 
@@ -78,7 +82,7 @@ FIRMWARE_UPLOAD_TOKEN=<upload-token>
 FIRMWARE_JOB_ID=<unique-safe-job-id>
 ```
 
-The builder sends an authenticated HTTP `PUT` for the two firmware images,
+The builder sends an authenticated HTTP `PUT` for the three firmware images,
 `build.log`, and `manifest.json` to
 `<upload-url>/<job-id>/artifacts/<filename>`. The manifest is uploaded last so
 consumers do not observe a completed job before its other objects are available.

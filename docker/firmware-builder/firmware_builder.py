@@ -30,8 +30,18 @@ SAFE_REPORTED_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 SAFE_JOB_ID = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 SAFE_WAKE_WORD = re.compile(r"^(?:disabled|nihaoxiaozhi|wn9[sl]?_[a-z0-9_]+)$")
 ARTIFACTS = {
-    "ota": Path("build/xiaozhi.bin"),
-    "full": Path("build/merged-binary.bin"),
+    "ota": {
+        "path": Path("build/xiaozhi.bin"),
+        "partition": "app",
+    },
+    "assets": {
+        "path": Path("build/generated_assets.bin"),
+        "partition": "assets",
+    },
+    "full": {
+        "path": Path("build/merged-binary.bin"),
+        "partition": None,
+    },
 }
 UPLOAD_MAX_ATTEMPTS = 4
 UPLOAD_BASE_DELAY_SECONDS = 1
@@ -234,9 +244,27 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def collect_artifacts(source_dir: Path, output_dir: Path) -> list[dict[str, object]]:
+def load_flasher_args(source_dir: Path) -> dict[str, Any]:
+    path = source_dir / "build/flasher_args.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Invalid ESP-IDF flasher metadata {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid ESP-IDF flasher metadata {path}: expected an object")
+    return value
+
+
+def collect_artifacts(
+    source_dir: Path,
+    output_dir: Path,
+    flasher_args: dict[str, Any],
+) -> list[dict[str, object]]:
     collected: list[dict[str, object]] = []
-    for kind, relative_path in ARTIFACTS.items():
+    for kind, specification in ARTIFACTS.items():
+        relative_path = specification["path"]
+        partition = specification["partition"]
+        assert isinstance(relative_path, Path)
         source = source_dir / relative_path
         if not source.is_file():
             raise FileNotFoundError(f"Expected build artifact not found: {source}")
@@ -244,15 +272,85 @@ def collect_artifacts(source_dir: Path, output_dir: Path) -> list[dict[str, obje
         temporary = destination.with_suffix(destination.suffix + ".tmp")
         shutil.copyfile(source, temporary)
         temporary.replace(destination)
-        collected.append(
-            {
-                "kind": kind,
-                "file": destination.name,
-                "size": destination.stat().st_size,
-                "sha256": sha256(destination),
-            }
-        )
+        artifact: dict[str, object] = {
+            "kind": kind,
+            "file": destination.name,
+            "size": destination.stat().st_size,
+            "sha256": sha256(destination),
+        }
+        if partition is not None:
+            flash_entry = flasher_args.get(partition)
+            if not isinstance(flash_entry, dict):
+                raise ValueError(
+                    f"ESP-IDF flasher metadata is missing {partition!r}"
+                )
+            offset = flash_entry.get("offset")
+            flash_file = flash_entry.get("file")
+            if not isinstance(offset, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", offset):
+                raise ValueError(f"Invalid {partition} flash offset: {offset!r}")
+            if flash_file != relative_path.name:
+                raise ValueError(
+                    f"Unexpected {partition} flash file: {flash_file!r}"
+                )
+            artifact["partition"] = partition
+            artifact["offset"] = offset.lower()
+        collected.append(artifact)
     return collected
+
+
+def partition_flash_plan(
+    flasher_args: dict[str, Any],
+    artifacts: list[dict[str, object]],
+) -> dict[str, object]:
+    extra_args = flasher_args.get("extra_esptool_args")
+    flash_settings = flasher_args.get("flash_settings")
+    if not isinstance(extra_args, dict) or not isinstance(flash_settings, dict):
+        raise ValueError("ESP-IDF flasher metadata is missing flash settings")
+    chip = extra_args.get("chip")
+    if not isinstance(chip, str) or not SAFE_REPORTED_IDENTIFIER.fullmatch(chip):
+        raise ValueError(f"Invalid ESP-IDF chip identifier: {chip!r}")
+
+    setting_args: list[str] = []
+    for key in ("flash_mode", "flash_freq", "flash_size"):
+        value = flash_settings.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"Invalid ESP-IDF flash setting {key}: {value!r}")
+        setting_args.extend([f"--{key.replace('_', '-')}", value])
+
+    writes = [
+        {
+            "partition": artifact["partition"],
+            "offset": artifact["offset"],
+            "file": artifact["file"],
+            "sha256": artifact["sha256"],
+        }
+        for artifact in artifacts
+        if "partition" in artifact
+    ]
+    command_args = [
+        "--chip",
+        chip,
+        "--port",
+        "<PORT>",
+        "--baud",
+        "460800",
+        "write-flash",
+        *setting_args,
+    ]
+    for write in writes:
+        command_args.extend([str(write["offset"]), str(write["file"])])
+
+    return {
+        "purpose": "Update application and assets without writing NVS",
+        "chip": chip,
+        "preserves_nvs": True,
+        "omits": ["bootloader", "partition-table", "otadata", "nvs", "phy_init"],
+        "writes": writes,
+        "command": {
+            "program": "python",
+            "args": ["-m", "esptool", *command_args],
+        },
+    }
 
 
 def write_manifest(output_dir: Path, manifest: dict[str, object]) -> None:
@@ -434,9 +532,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if return_code == 0:
         try:
-            manifest["artifacts"] = collect_artifacts(args.source_dir, args.output_dir)
+            flasher_args = load_flasher_args(args.source_dir)
+            artifacts = collect_artifacts(
+                args.source_dir,
+                args.output_dir,
+                flasher_args,
+            )
+            manifest["artifacts"] = artifacts
+            manifest["partition_flash"] = partition_flash_plan(
+                flasher_args,
+                artifacts,
+            )
             manifest["status"] = "succeeded"
-        except (OSError, FileNotFoundError) as error:
+        except (OSError, FileNotFoundError, ValueError) as error:
             print(f"firmware-builder: {error}", file=sys.stderr)
             manifest["status"] = "failed"
             manifest["error"] = str(error)

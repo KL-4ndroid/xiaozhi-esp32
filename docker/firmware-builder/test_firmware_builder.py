@@ -46,7 +46,18 @@ if %d == 0:
     build = pathlib.Path("build")
     build.mkdir(exist_ok=True)
     (build / "xiaozhi.bin").write_bytes(b"ota")
+    (build / "generated_assets.bin").write_bytes(b"assets")
     (build / "merged-binary.bin").write_bytes(b"full")
+    (build / "flasher_args.json").write_text('''{
+        "flash_settings": {
+            "flash_mode": "dio",
+            "flash_size": "4MB",
+            "flash_freq": "80m"
+        },
+        "extra_esptool_args": {"chip": "esp32c3"},
+        "app": {"offset": "0x10000", "file": "xiaozhi.bin"},
+        "assets": {"offset": "0x300000", "file": "generated_assets.bin"}
+    }''')
 sys.exit(%d)
 """
             % (exit_code, exit_code),
@@ -85,6 +96,9 @@ sys.exit(%d)
 
             self.assertEqual(exit_code, 0)
             self.assertEqual((output / "xiaozhi.bin").read_bytes(), b"ota")
+            self.assertEqual(
+                (output / "generated_assets.bin").read_bytes(), b"assets"
+            )
             self.assertEqual((output / "merged-binary.bin").read_bytes(), b"full")
             self.assertIn("fake compiler output", (output / "build.log").read_text())
             manifest = json.loads((output / "manifest.json").read_text())
@@ -116,7 +130,32 @@ sys.exit(%d)
             self.assertTrue(manifest["runtime_architecture"])
             self.assertGreaterEqual(manifest["runtime_cpu_count"], 1)
             self.assertEqual(
-                {item["kind"] for item in manifest["artifacts"]}, {"ota", "full"}
+                {item["kind"] for item in manifest["artifacts"]},
+                {"ota", "assets", "full"},
+            )
+            self.assertTrue(manifest["partition_flash"]["preserves_nvs"])
+            self.assertEqual(
+                manifest["partition_flash"]["writes"],
+                [
+                    {
+                        "partition": "app",
+                        "offset": "0x10000",
+                        "file": "xiaozhi.bin",
+                        "sha256": firmware_builder.sha256(output / "xiaozhi.bin"),
+                    },
+                    {
+                        "partition": "assets",
+                        "offset": "0x300000",
+                        "file": "generated_assets.bin",
+                        "sha256": firmware_builder.sha256(
+                            output / "generated_assets.bin"
+                        ),
+                    },
+                ],
+            )
+            self.assertEqual(
+                manifest["partition_flash"]["command"]["args"][-4:],
+                ["0x10000", "xiaozhi.bin", "0x300000", "generated_assets.bin"],
             )
 
     def test_failed_build_preserves_log_and_failed_manifest(self) -> None:
@@ -215,7 +254,7 @@ sys.exit(%d)
                 )
 
             self.assertEqual(exit_code, 0)
-            self.assertEqual(len(uploads), 4)
+            self.assertEqual(len(uploads), 5)
             self.assertEqual(
                 uploads[-1].full_url,
                 "https://example.com/api/firmware-builds/test-job/artifacts/manifest.json",
